@@ -21,6 +21,7 @@ public class SecurityConfig {
 				.authorizeHttpRequests(auth -> auth
 						// /error must stay public so unmapped routes return 404, not 401.
 						.requestMatchers("/api/**", "/error").permitAll()
+						.requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**").permitAll()
 						.anyRequest().denyAll())
 				.build();
 	}
