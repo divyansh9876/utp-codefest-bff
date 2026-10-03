@@ -1,0 +1,307 @@
+openapi: 3.1.0
+info:
+  title: UTP CodeFest BFF API (workshop contract)
+  version: 1.0.0
+  description: |
+    The full API the pre-built Next.js frontend expects from the Spring Boot BFF.
+    The browser calls `/api/*` on the frontend's origin; Next.js proxies it to this service.
+
+    Every error body has the shape `{ "error": "message" }`.
+    Endpoints are built across the workshop: Health (Phase 1), Projects (Phase 2), Auth (Phase 3).
+  license:
+    name: MIT
+servers:
+  - url: /
+    description: This server (wherever this spec is served from)
+  - url: http://localhost:8080
+    description: Local Spring Boot
+tags:
+  - name: Health
+    description: "Phase 1: is the BFF up, and can it reach MongoDB?"
+  - name: Projects
+    description: "Phase 2: hackathon project CRUD"
+  - name: Auth
+    description: "Phase 3: local (BCrypt) and Google sign-in, both returning our JWT"
+
+paths:
+  /api/health:
+    get:
+      tags: [Health]
+      operationId: health
+      summary: Ping MongoDB
+      description: Runs MongoDB's `ping` command and reports the round-trip latency.
+      responses:
+        "200":
+          description: BFF and database are reachable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthOk" }
+        "503":
+          description: BFF is up but MongoDB is unreachable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthDown" }
+
+  /api/projects:
+    get:
+      tags: [Projects]
+      operationId: listProjects
+      summary: List projects, newest first
+      responses:
+        "200":
+          description: All projects
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [projects]
+                properties:
+                  projects:
+                    type: array
+                    items: { $ref: "#/components/schemas/Project" }
+    post:
+      tags: [Projects]
+      operationId: createProject
+      summary: Submit a project
+      description: The server sets `id` and `createdAt`; any other fields in the body are ignored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateProjectRequest" }
+      responses:
+        "201":
+          description: Project saved
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [project]
+                properties:
+                  project: { $ref: "#/components/schemas/Project" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /api/projects/{id}:
+    delete:
+      tags: [Projects]
+      operationId: deleteProject
+      summary: Delete a project (JWT required)
+      description: Guarded by `JwtAuthFilter`, which rejects missing or invalid tokens before the controller runs.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: MongoDB ObjectId of the project
+          schema: { type: string, example: 6ac0f95588e87dba324c74b8 }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, id]
+                properties:
+                  ok: { type: boolean, const: true }
+                  id: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: No project with that id
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: Project not found }
+
+  /api/auth/register:
+    post:
+      tags: [Auth]
+      operationId: register
+      summary: Create a local account
+      description: The password is stored as a BCrypt hash. The response never includes it, and no token is issued; log in next.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterRequest" }
+      responses:
+        "201":
+          description: Account created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409":
+          description: Email already registered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: Email is already registered }
+
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      summary: Log in with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: Credentials valid; here is our JWT
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: Same message for unknown email and wrong password, so attackers can't probe for accounts
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: Invalid email or password }
+
+  /api/auth/google:
+    post:
+      tags: [Auth]
+      operationId: googleSignIn
+      summary: Exchange a Google ID token for our JWT
+      description: |
+        `GoogleIdTokenVerifier` checks Google's signature, expiry and that the audience is our client ID.
+        The user is found by Google ID, linked by email to an existing account, or created.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GoogleRequest" }
+      responses:
+        "200":
+          description: Google token valid; here is our JWT
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: Invalid, expired or wrong-audience Google token, or unverified email
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: Invalid Google token }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: The `token` from `/api/auth/login` or `/api/auth/google`.
+
+  responses:
+    BadRequest:
+      description: Validation failed or the body isn't valid JSON
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: "title: Title is required" }
+    Unauthorized:
+      description: Missing, invalid or expired JWT
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: "Unauthorized: log in first" }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+
+    HealthOk:
+      type: object
+      required: [status, db, dbName, latencyMs]
+      properties:
+        status: { type: string, const: ok }
+        db: { type: string, const: connected }
+        dbName: { type: string, example: codefest }
+        latencyMs: { type: integer, format: int64, example: 12 }
+
+    HealthDown:
+      type: object
+      required: [status, db, error]
+      properties:
+        status: { type: string, const: error }
+        db: { type: string, const: disconnected }
+        error: { type: string, example: Timed out after 30000 ms }
+
+    Category:
+      type: string
+      enum: [AI / ML, Web, Mobile, FinTech, Sustainability, HealthTech, EdTech, IoT, Gaming, Other]
+
+    Project:
+      type: object
+      required: [id, title, description, category, createdAt]
+      properties:
+        id: { type: string, description: MongoDB ObjectId, example: 6ac0f95588e87dba324c74b8 }
+        title: { type: string, example: CampusEats }
+        description: { type: string, example: Order food from UTP cafes and skip the queue. }
+        category: { $ref: "#/components/schemas/Category" }
+        teamName: { type: [string, "null"], example: Null Pointers }
+        repoUrl: { type: [string, "null"], example: https://github.com/null-pointers/campuseats }
+        createdAt: { type: string, format: date-time, description: Set by the server }
+
+    CreateProjectRequest:
+      type: object
+      required: [title, description, category]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 80, example: CampusEats }
+        description: { type: string, minLength: 1, maxLength: 500, example: Order food from UTP cafes and skip the queue. }
+        category: { $ref: "#/components/schemas/Category" }
+        teamName: { type: string, maxLength: 60, example: Null Pointers }
+        repoUrl: { type: string, example: https://github.com/null-pointers/campuseats }
+
+    User:
+      type: object
+      description: Never includes the password hash.
+      required: [id, name, email, provider]
+      properties:
+        id: { type: string, example: 6ac0f95588e87dba324c74b9 }
+        name: { type: string, example: Ada Lovelace }
+        email: { type: string, format: email, example: ada@utp.edu.my }
+        provider: { type: string, enum: [local, google] }
+        googleId: { type: [string, "null"], description: Google account ID (`sub`), google provider only }
+        avatar: { type: [string, "null"], description: Google profile picture URL }
+
+    RegisterRequest:
+      type: object
+      required: [name, email, password]
+      properties:
+        name: { type: string, minLength: 1, example: Ada Lovelace }
+        email: { type: string, format: email, example: ada@utp.edu.my }
+        password: { type: string, minLength: 8, format: password, example: CodeFest2026! }
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email, example: ada@utp.edu.my }
+        password: { type: string, format: password, example: CodeFest2026! }
+
+    GoogleRequest:
+      type: object
+      required: [credential]
+      properties:
+        credential: { type: string, description: The ID token from the Google Sign-In button }
+
+    AuthResponse:
+      type: object
+      required: [token, user]
+      properties:
+        token: { type: string, description: Our HMAC-signed JWT, example: eyJhbGciOiJIUzUxMiJ9... }
+        user: { $ref: "#/components/schemas/User" }
