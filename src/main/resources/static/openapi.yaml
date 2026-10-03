@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: UTP CodeFest BFF API (workshop contract)
-  version: 1.1.0
+  version: 1.2.0
   description: |
     The full API the pre-built Next.js frontend expects from the Spring Boot BFF.
     The browser calls `/api/*` on the frontend's origin; Next.js proxies it to this service.
@@ -9,8 +9,9 @@ info:
     Every error body has the shape `{ "error": "message" }`.
     Endpoints are built across the workshop: Health (Phase 1), Projects (Phase 2), Auth (Phase 3).
 
-    **Implemented so far:** `GET /api/health`, `GET /api/projects`, `POST /api/projects`.
-    Delete and the auth endpoints arrive together in Phase 3, because delete must be JWT-protected.
+    **Implemented so far:** `GET /api/health`, `GET /api/projects`, `POST /api/projects`,
+    `POST /api/auth/register`, `POST /api/auth/login`.
+    Still to come: the JWT-protected `DELETE /api/projects/{id}` and Google sign-in.
     Switch to "Implemented (generated from code)" in the definition dropdown to see only live endpoints.
   license:
     name: MIT
@@ -143,17 +144,19 @@ paths:
                   user: { $ref: "#/components/schemas/User" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "409":
-          description: Email already registered
+          description: Username or email already registered
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-              example: { error: Email is already registered }
+              examples:
+                username: { value: { error: Username is already taken } }
+                email: { value: { error: Email is already registered } }
 
   /api/auth/login:
     post:
       tags: [Auth]
       operationId: login
-      summary: Log in with email and password
+      summary: Log in with email or username
       requestBody:
         required: true
         content:
@@ -167,11 +170,11 @@ paths:
               schema: { $ref: "#/components/schemas/AuthResponse" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401":
-          description: Same message for unknown email and wrong password, so attackers can't probe for accounts
+          description: Same message for unknown account and wrong password, so attackers can't probe for accounts
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-              example: { error: Invalid email or password }
+              example: { error: Invalid email/username or password }
 
   /api/auth/google:
     post:
@@ -275,29 +278,47 @@ components:
     User:
       type: object
       description: Never includes the password hash.
-      required: [id, name, email, provider]
+      required: [id, name, username, email, provider]
       properties:
         id: { type: string, example: 6ac0f95588e87dba324c74b9 }
-        name: { type: string, example: Ada Lovelace }
-        email: { type: string, format: email, example: ada@utp.edu.my }
+        name: { type: string, example: Ali Hacker }
+        username: { type: string, description: Stored lowercase, example: ali_hacker }
+        email: { type: string, format: email, description: Stored lowercase, example: ali@utp.edu.my }
         provider: { type: string, enum: [local, google] }
+        createdAt: { type: string, format: date-time }
         googleId: { type: [string, "null"], description: Google account ID (`sub`), google provider only }
         avatar: { type: [string, "null"], description: Google profile picture URL }
 
     RegisterRequest:
       type: object
-      required: [name, email, password]
+      required: [username, email, password]
       properties:
-        name: { type: string, minLength: 1, example: Ada Lovelace }
-        email: { type: string, format: email, example: ada@utp.edu.my }
-        password: { type: string, minLength: 8, format: password, example: CodeFest2026! }
+        name: { type: string, maxLength: 60, description: Display name; defaults to the username, example: Ali Hacker }
+        username:
+          type: string
+          pattern: "^[A-Za-z0-9._]{3,30}$"
+          description: 3-30 letters, digits, dots or underscores; unique and case-insensitive
+          example: ali_hacker
+        email: { type: string, format: email, maxLength: 254, description: Unique and case-insensitive, example: ali@utp.edu.my }
+        password:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 72
+          description: Hashed with BCrypt (cost 10). Capped at 72 because BCrypt ignores anything longer.
+          example: CodeFest2026!
 
     LoginRequest:
       type: object
-      required: [email, password]
+      description: Send `email` or `username` (one is enough). An `email` value without "@" is treated as a username.
+      required: [password]
       properties:
-        email: { type: string, format: email, example: ada@utp.edu.my }
+        email: { type: string, example: ali@utp.edu.my }
+        username: { type: string, example: ali_hacker }
         password: { type: string, format: password, example: CodeFest2026! }
+      anyOf:
+        - required: [email]
+        - required: [username]
 
     GoogleRequest:
       type: object
