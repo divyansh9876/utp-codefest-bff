@@ -1,13 +1,17 @@
 openapi: 3.1.0
 info:
   title: UTP CodeFest BFF API (workshop contract)
-  version: 1.0.0
+  version: 1.1.0
   description: |
     The full API the pre-built Next.js frontend expects from the Spring Boot BFF.
     The browser calls `/api/*` on the frontend's origin; Next.js proxies it to this service.
 
     Every error body has the shape `{ "error": "message" }`.
     Endpoints are built across the workshop: Health (Phase 1), Projects (Phase 2), Auth (Phase 3).
+
+    **Implemented so far:** `GET /api/health`, `GET /api/projects`, `POST /api/projects`.
+    Delete and the auth endpoints arrive together in Phase 3, because delete must be JWT-protected.
+    Switch to "Implemented (generated from code)" in the definition dropdown to see only live endpoints.
   license:
     name: MIT
 servers:
@@ -85,8 +89,10 @@ paths:
     delete:
       tags: [Projects]
       operationId: deleteProject
-      summary: Delete a project (JWT required)
-      description: Guarded by `JwtAuthFilter`, which rejects missing or invalid tokens before the controller runs.
+      summary: Delete a project (JWT required, Phase 3)
+      description: |
+        Guarded by `JwtAuthFilter`, which rejects missing or invalid tokens before the controller runs.
+        Not implemented yet: until Phase 3 this path returns 404 or 405.
       security:
         - bearerAuth: []
       parameters:
@@ -264,7 +270,7 @@ components:
         description: { type: string, minLength: 1, maxLength: 500, example: Order food from UTP cafes and skip the queue. }
         category: { $ref: "#/components/schemas/Category" }
         teamName: { type: string, maxLength: 60, example: Null Pointers }
-        repoUrl: { type: string, example: https://github.com/null-pointers/campuseats }
+        repoUrl: { type: string, maxLength: 300, example: https://github.com/null-pointers/campuseats }
 
     User:
       type: object
